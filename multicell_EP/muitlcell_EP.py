@@ -29,39 +29,48 @@ class Reaction_nlin(Reaction):
 @dataclass    
 class Cell():
     chemicals:typing.List[float]
-    reactions:typing.List[Reaction]
+    #reactions:typing.List[Reaction]
 
+SMALLVAL=1e-8
 def calcEP(cell:Cell,reactions:typing.List[Reaction]):
     ep=0
     for r in reactions:#反応種ごと
-        ps=r.ps(cell)
-        pt=r.pt(cell)
-        ep=ep+(ps-pt)*np.log(ps/pt)
-        ep=ep+(pt-ps)*np.log(pt/ps)
+        ps=r.ps(cell)+1e-8
+        pt=r.pt(cell)+1e-8
+        try:
+            ep=ep+2*((ps-pt)*np.log(ps/pt))
+        except:
+            ep=1e+10
     return ep
 
 def totalEP(cells:list,reactions:typing.List[Reaction]):
     return np.sum([calcEP(c,reactions) for c in cells])
 
-def run(cells:list,reactions:list,Ds:list,externalchemicals,dt=0.01):
-    ncells=cells.copy()
+def run(cells:list,reactions:list,Ds:list,externalchemicals,dt=0.01,debug=False):
+    ncells=copy.deepcopy(cells)
     N=len(cells)
     for i,c in enumerate(cells):
+        nc=ncells[i]
         #reactions
+        if(debug):
+            print(f"{i}th cell")
         for p in range(len(c.chemicals)):#chemical index
-            ncells[i].chemicals[p]=c.chemicals[p]
+            nc.chemicals[p]=c.chemicals[p]
             #chemical reactions
             for r in reactions:
                 if(p in r.source):
-                    ncells[i].chemicals[p]=c.chemicals[p]-r.pt(c)*dt
+                    nc.chemicals[p]=c.chemicals[p]-r.pt(c)*dt
                 elif(p in r.target):
-                    ncells[i].chemicals[p]=c.chemicals[p]+r.ps(c)*dt
+                    nc.chemicals[p]=c.chemicals[p]+r.ps(c)*dt
             #diffusions            
-            ncells[i].chemicals[p]+=Ds[p]["inter"]*(cells[(i-1+N)%N].chemicals[p]+cells[(i+1)%N].chemicals[p]-2*c.chemicals[p])*dt
-            ncells[i].chemicals[p]+=Ds[p]["global"]*(externalchemicals[p] -c.chemicals[p])*dt
-    cells=ncells                    
+            nc.chemicals[p]+=Ds[p]["inter"]*(cells[(i-1+N)%N].chemicals[p]+cells[(i+1)%N].chemicals[p]-2*c.chemicals[p])*dt
+            #dilutons?
+            nc.chemicals[p]+=Ds[p]["global"]*(externalchemicals[p] -c.chemicals[p])*dt
+    return ncells
 
-sample=npr.random_sample
+def sample(r=1e-8):
+    return npr.random_sample()+r
+
 randint=npr.randint
 
 class Cells():
@@ -70,13 +79,24 @@ class Cells():
     M  num. of chemical spieces
     Nr num. of reactions
     """
-    def __init__(self,Nc,M,Nr):
-        self.reactions=[ Reaction([randint(M)],[randint(M)],[randint(M)]) for i in range(Nr)] #index
-        self.cells=[Cell([sample() for _ in range(M) ],self.reactions) for _ in range(Nc)]
-        self.Ds=[{"global":sample(), "inter":sample()} for _ in range(M)]
-        
+    def __init__(self,Nc=100,M=30,Nr=20,dilute="gradient"):
+        self.reactions=[ Reaction([randint(M-1)],[randint(M-1)],[randint(M-1),randint(M-1)]) for i in range(Nr)] #index
+        self.cells=[Cell([sample() for _ in range(M) ]) for _ in range(Nc)]
+        self.totsize=Nc*M    
+        if(dilute=="gradient"):# 奥(index大)のほうが小さい
+            self.Ds=[{"global":sample((M-i)*0.1), "inter":sample((M-i)*0.1)} for i in range(M)]
+        elif(dilute=="gradient_exp"):# 奥(index大)のほうが小さい
+            self.Ds=[{"global":sample(2**((M-i)/M)), "inter":sample(2**((M-i)/M))} for i in range(M)]
+        else:#random
+            self.Ds=[{"global":sample(), "inter":sample()} for _ in range(M)]
+
+
     def calcEP(self):
         return [calcEP(c,self.reactions) for c in self.cells]
+
+    def calcEntrotpy(self):#細胞間多様性
+        return np.sum([p*np.log(p) for c in self.cells for p in c.chemicals ])
+    
     def population(self):
         return [c.chemicals for c in self.cells]
     
@@ -84,28 +104,39 @@ class Cells():
         print(self.population(),file=fp)
 
     def run(self,externalchemicals,dt=0.05):
-        run(self.cells,self.reactions,self.Ds,externalchemicals,dt)
+        self.cells=run(self.cells,self.reactions,self.Ds,externalchemicals,dt)
+
+    def run_all(self,T,externalchemicals,dt=0.05,suffix="",peri=100,debug=False):        
+        EP=[]
+        history=[]
+        for t in range(T):
+            if(debug):
+                print(t)
+            self.run(externalchemicals,dt)
+            if(t%peri==0):
+                eps=self.calcEP()
+                EP.append(eps)
+                history.append(self.population())
+                
+        EP=np.array(eps)
+        np.savetxt(f"EntropyProd_{suffix}.csv",EP)
+        #print(history)
+        history=np.array(history).reshape(self.totsize,T//peri)
+        np.savetxt(f"history_{suffix}.csv",history)
+
+class SignalCells(Cells):
+    def __init__(self,Nc,M,Nr):
+        super().__init__(Nc,M,Nr)
+        Nr=M*2
+        #pairindex
+        self.reactions=[ Reaction([i],[i+1],[max(i+2,M),min(i-2,0)]) for i in range(Nr-1)] 
 
 #前処理
 if __name__=="__main__":
     dt=0.05        
-    T=10000
-    Nc=100
-    M=30
-    Nr=20
-
+#    T=10000
+    T=600
+    Nc,M,Nr=100,30,20
     cells=Cells(Nc,M,Nr)
     externalchemicals=[sample() for _ in range(M)]
-    EP=[]
-    history=[]
-    for t in range(T):
-        cells.run(externalchemicals,dt)
-        if(t%100==0):
-            eps=cells.calcEP()
-            EP.append(eps)
-            history.append(cells.population())
-            
-    EP=np.array(eps)
-    np.savetxt("EntropyProd.csv",EP)
-    history=np.array(history)
-    np.savetxt("history.csv",history)
+    cells.run_all(T,externalchemicals,dt,"today")
