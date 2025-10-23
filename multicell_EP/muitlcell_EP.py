@@ -1,4 +1,5 @@
 import __future__
+import typing
 import numpy as np
 import numpy.random as npr
 import copy
@@ -7,10 +8,10 @@ import random
 import sys
 
 @dataclass
-class Reaction:
-    source:list[int]=[]
-    target:list[int]=[]
-    enzymes:list[int]=[]
+class Reaction():
+    source:typing.List[int]
+    target:typing.List[int]
+    enzymes:typing.List[int]
     def ps(self,c):#forward
         return self.enzymes[0]*np.prod([c.chemicals[i] for i in self.source])
     def pt(self,c):#backward
@@ -26,11 +27,11 @@ class Reaction_nlin(Reaction):
         return np.tanh(self.enzymes[1]*np.prod([c.chemicals[i] for i in self.target])-self.th)
         
 @dataclass    
-class Cell:
-    chemicals:list[float]=[]
-    reactions:list[Reaction]=[]
+class Cell():
+    chemicals:typing.List[float]
+    reactions:typing.List[Reaction]
 
-def calcEP(cell:Cell,reactions:list[Reaction]):
+def calcEP(cell:Cell,reactions:typing.List[Reaction]):
     ep=0
     for r in reactions:#反応種ごと
         ps=r.ps(cell)
@@ -39,11 +40,11 @@ def calcEP(cell:Cell,reactions:list[Reaction]):
         ep=ep+(pt-ps)*np.log(pt/ps)
     return ep
 
-def totalEP(cells:list,reactions:list[Reaction]):
+def totalEP(cells:list,reactions:typing.List[Reaction]):
     return np.sum([calcEP(c,reactions) for c in cells])
 
 def run(cells:list,reactions:list,Ds:list,externalchemicals,dt=0.01):
-    ncells=cells.copy(cells)
+    ncells=cells.copy()
     N=len(cells)
     for i,c in enumerate(cells):
         #reactions
@@ -56,8 +57,8 @@ def run(cells:list,reactions:list,Ds:list,externalchemicals,dt=0.01):
                 elif(p in r.target):
                     ncells[i].chemicals[p]=c.chemicals[p]+r.ps(c)*dt
             #diffusions            
-            ncells.chemicals[p]+=Ds[p]["inter"]*(cells[(i-1)].chemicals[p]+cells[(i+1)].chemicals[p]-2*c.chemicals[p])*dt
-            ncells.chemicals[p]+=Ds[p]["global"]*(externalchemicals[p] -c.chemicals[p])*dt
+            ncells[i].chemicals[p]+=Ds[p]["inter"]*(cells[(i-1+N)%N].chemicals[p]+cells[(i+1)%N].chemicals[p]-2*c.chemicals[p])*dt
+            ncells[i].chemicals[p]+=Ds[p]["global"]*(externalchemicals[p] -c.chemicals[p])*dt
     cells=ncells                    
 
 sample=npr.random_sample
@@ -69,9 +70,9 @@ class Cells():
     M  num. of chemical spieces
     Nr num. of reactions
     """
-    def init(self,Nc,M,Nr):
-        self.reactions=[ Reaction(randint(M),randint(M),randint(M)) for i in range(Nr)] #index
-        self.cells=[Cell(sample(),self.reactions) for _ in range(Nc)]
+    def __init__(self,Nc,M,Nr):
+        self.reactions=[ Reaction([randint(M)],[randint(M)],[randint(M)]) for i in range(Nr)] #index
+        self.cells=[Cell([sample() for _ in range(M) ],self.reactions) for _ in range(Nc)]
         self.Ds=[{"global":sample(), "inter":sample()} for _ in range(M)]
         
     def calcEP(self):
@@ -94,13 +95,13 @@ if __name__=="__main__":
     Nr=20
 
     cells=Cells(Nc,M,Nr)
-    externalchemicals=[npr.random_sample() for _ in M]
+    externalchemicals=[sample() for _ in range(M)]
     EP=[]
     history=[]
     for t in range(T):
-        cells.run(dt)
+        cells.run(externalchemicals,dt)
         if(t%100==0):
-            eps=cells.calcEP(externalchemicals,dt)
+            eps=cells.calcEP()
             EP.append(eps)
             history.append(cells.population())
             
