@@ -6,6 +6,7 @@ import copy
 from dataclasses import dataclass
 import random
 import sys
+import matplotlib.pyplot as plt
 
 @dataclass
 class Reaction():
@@ -106,7 +107,7 @@ class Cells():
     def run(self,externalchemicals,dt=0.05):
         self.cells=run(self.cells,self.reactions,self.Ds,externalchemicals,dt)
 
-    def run_all(self,T,externalchemicals,dt=0.05,suffix="",peri=100,debug=False):        
+    def run_all(self,T,externalchemicals,dt=0.05,suffix="",peri=100,debug=False,plot=False):        
         EP=[]
         history=[]
         for t in range(T):
@@ -120,9 +121,15 @@ class Cells():
                 
         EP=np.array(eps)
         np.savetxt(f"EntropyProd_{suffix}.csv",EP)
-        #print(history)
         history=np.array(history).reshape(self.totsize,T//peri)
         np.savetxt(f"history_{suffix}.csv",history)
+        if(plot):
+            plt.plot(history)
+            plt.savefig(f"history_{suffix}.png")            
+            plt.clf()
+            plt.close()
+            plt.plot(EP)
+            plt.savefig(f"EP_{suffix}.png")            
 
 class SignalCells(Cells):
     def __init__(self,Nc,M,Nr):
@@ -133,10 +140,10 @@ class SignalCells(Cells):
 
 #前処理
 if __name__=="__main__":
-    dt=0.05        
+    dt=0.01        
 #    T=10000
-    T=600
+    T=1000
     Nc,M,Nr=100,30,20
     cells=Cells(Nc,M,Nr)
     externalchemicals=[sample() for _ in range(M)]
-    cells.run_all(T,externalchemicals,dt,"today")
+    cells.run_all(T,externalchemicals,dt,"today",plot=True)
