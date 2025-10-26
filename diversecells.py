@@ -98,16 +98,15 @@ class DiverseCells_gpu(torch.nn.Module):
         palpha=torch.pow(self.p,self.alpha)
         pp=torch.einsum("nil,nl->ni",torch.einsum("jil,nj->nil", self.k, self.p),palpha)
         pn=torch.einsum("nil,nl->ni",torch.einsum("jil,nj->nil", self.k, self.p),palpha)       
-        pd=self.D*(torch.reshape(torch.repeat(p_ave,N,axis=0),(N,M))-self.p)
+        pd=self.D*(torch.reshape(torch.repeat(p_ave,self.N,axis=0),(self.N,self.M))-self.p)
         pm=self.m*self.p
         return self.dt*(pp-pn-pm+pd+self.eps*torch.poisson(torch.rand(self.N,self.M)*self.p))
     
     def prop(self,dt):           
-        self.p=self.p+self.step(dt)
-        return self.p
+        return self.p+self.step(dt)
         
     def timeseries(self,t):
-        population=[self.prop(self.dt) for t in range(t)]
+        population=[self.prop(self.dt) for _ in range(t)]
         return np.array(population)
            
 #enviroment change    
@@ -139,7 +138,7 @@ class DiverseCells_gpu(torch.nn.Module):
                       
                 # print statistics
                 running_loss += loss.item()
-                print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f} ')
+                print(f'epoch[{i + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f} ')
                 running_loss = 0.0
 
         print('Finished Evolution path')
