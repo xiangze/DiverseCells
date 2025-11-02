@@ -40,7 +40,7 @@ class DiverseCells():
         palpha=np.power(self.p,self.alpha)
         pp=np.einsum("nil,nl->ni",np.einsum("jil,nj->nil", self.k, self.p),palpha)
         pn=np.einsum("nil,nl->ni",np.einsum("jil,nj->nil", self.k, self.p),palpha)       
-        pd=self.D*(np.repeat(p_ave,N,axis=0).reshape([N,M])-self.p)
+        pd=self.D*(np.repeat(p_ave,N,axis=0).reshape([self.N,self.M])-self.p)
         pm=self.m*self.p
         return self.dt*(pp-pn-pm+pd+self.eps*np.random.poisson(self.p))
         
