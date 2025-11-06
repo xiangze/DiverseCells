@@ -8,6 +8,8 @@ import random
 import sys
 import matplotlib.pyplot as plt
 import datetime
+import os
+import warnings
 
 @dataclass
 class Reaction():
@@ -33,22 +35,25 @@ class Cell():
     chemicals:typing.List[float]
     def calcVolume(self):
         return sum([p for p in self.chemicals[p] ])
-    
-calcep= lambda ps,pt:(ps-pt)*np.log(ps/pt)
 
-SMALLVAL=1e-8
-LARGEVAL=1e+10
+def calcEP(p:float):
+    if(p>0.):
+        return p*np.log(p) 
+    else:
+        return 0.
+    
+warnings.simplefilter('error')
+def calcep(ps,pt):
+    try:
+        return (ps-pt)*np.log(ps/pt)
+    except:
+        print(ps,pt)
+
 def calcReactionEP(cell:Cell,reactions:typing.List[Reaction])->float:
     ep=0
     for r in reactions:#反応種ごと
-        ps=r.ps(cell)+SMALLVAL
-        pt=r.pt(cell)+SMALLVAL
-        try:
-            ep+=ep+2*calcep(ps,pt)#ep+2*((ps-pt)*np.log(ps/pt))
-        except:
-            ep+=LARGEVAL
+        ep+=2*calcep(r.ps(cell),r.pt(cell))
     return ep
-
 
 sample=lambda r=1e-8:npr.random_sample()+r
 randint=npr.randint
@@ -68,6 +73,7 @@ class Cells():
         self.cells=[Cell([sample() for _ in range(M) ]) for _ in range(Nc)]
         self.totsize=Nc*M
         self.externalchemicals=externalchemicals
+        self.maxV=100
 
         if(reactiontype=="random"):
             self.reactions=[ Reaction([randint(M-1)],[randint(M-1)],[randint(M-1),randint(M-1)]) for i in range(Nr)] #index
@@ -104,6 +110,18 @@ class Cells():
         else:
             print("diluut mode are[gradient,gradient_exp,reverse,random,constant]")
 
+        self.valuecheck()
+
+
+    def valuecheck(self):
+        for c in self.cells:
+            for i in c.chemicals:
+                assert(i>0)            
+
+        for r in self.reactions:
+            for e in r.enzymes:
+                assert(e>0)
+
     def calcVolume(self,c:Cell)->float:
         return np.sum(c.chemicals)
     
@@ -130,12 +148,14 @@ class Cells():
     
     def calcEP(self,ci:int):
         return self.calcReactionEP(ci)+self.calcDiffusionEP()
+    
     def calcTotalEP(self):
         return sum([self.calcEP(ci) for ci in range(self.Nc) ])
 
     def calcEntropy(self):#細胞間多様性
-        return np.sum([p*np.log(p) for c in self.cells for p in c.chemicals ])
-    #
+        return np.sum([calcEP(p) for c in self.cells for p in c.chemicals ])
+    
+    # Total Entropy
     def calcTotalEntropy(self,dt):
         E0=self.calcEntropy()
         self.run(dt)
@@ -165,7 +185,6 @@ class Cells():
                 nc.chemicals[p]=c.chemicals[p]                
                 for r in self.reactions: #chemical reactions
                     if(p in r.source):
-                        print(r.pt(c),dt)
                         nc.chemicals[p]=c.chemicals[p]-r.pt(c)*dt
                     elif(p in r.target):
                         nc.chemicals[p]=c.chemicals[p]+r.ps(c)*dt
@@ -186,10 +205,11 @@ class Cells():
                 for p in range(len(c.chemicals)):
                     ncell.chemicals[p]+=sample()*1e-7
                 self.cells.insert(i,ncell)
-                self.Nc=Nc+1
+                self.Nc=self.Nc+1
 
-    def run_all(self,T,dt=0.05,suffix="",peri=100,debug=False,plot=True):
-        self.EP=[]
+
+    def run_all(self,T,dt=0.05,suffix="",ddir="",peri=100,debug=False,plot=True):
+        epss=[]
         history=[]
         totEnt=[]
         for t in range(T):
@@ -198,7 +218,7 @@ class Cells():
             self.run(dt)
             if(t%peri==0):
                 eps=self.calcTotalEP()
-                self.EP.append(eps)
+                epss.append(eps)
                 history.append(self.population())
                 totEnt.append(self.calcEntropy_dif(dt))
 
@@ -206,60 +226,66 @@ class Cells():
                     self.divide()
 
         self.totEnt=np.array(totEnt)
-        self.EP=np.array(eps)
+        self.EP=np.array(epss)
         self.history=np.array(history).reshape(self.totsize,T//peri)
-        self.save(suffix)
+        self.save(suffix,ddir)
         if(plot):        
-            self.plots(suffix)
+            self.plots(suffix,ddir)
             for p in range(self.M):
-                celldist=[ c.chemicals[p] for c in enumerate(self.cells)]
+                celldist=[ c.chemicals[p] for c in self.cells]
                 plt.plot(celldist)
-            plt.savefig(f"last_cell_distribusion_{suffix}.png")            
+            plt.savefig(f"{ddir}/last_cell_distribusion_{suffix}.png")            
             plt.clf()
             plt.close()
 
-    def plots(self,suffix):
+    def plots(self,suffix,ddir):
         for k,v in {"history":self.history,"EP":self.EP,"totalEntropy":self.totEnt}.items():
             plt.plot(v)
-            plt.savefig(f"{k}_{suffix}.png")            
+            plt.savefig(f"{ddir}/{k}_{suffix}.png")            
             plt.clf()
             plt.close()
 
-    def save(self,suffix=""):
-        np.savetxt(f"EntropyProd_{suffix}.csv",self.EP)
-        np.savetxt(f"totalEntropy_{suffix}.csv",self.totEnt)
-        np.savetxt(f"history_{suffix}.csv",self.history)
+    def save(self,suffix,ddir):
+        np.savetxt(f"{ddir}/EntropyProd_{suffix}.csv",self.EP)
+        np.savetxt(f"{ddir}/totalEntropy_{suffix}.csv",self.totEnt)
+        np.savetxt(f"{ddir}/history_{suffix}.csv",self.history)
 
-def run_default(T=1000,dt=0.01,Nc=200,r="random",d="gradient"):
-    seed=0
-    for M in [30,50,100,500]:
-        for nr in [0.1,0.5,0.8]:
-            now=datetime.datetime.now()
-            today=f"{now.year}:{now.month}:{now.date}_{now.hour}:{now.minute}:{now.second}"
-            Nr=int(M*nr)
-            externalchemicals=[sample(seed) for _ in range(M)]
-            cells=Cells(Nc,M,Nr,externalchemicals,dilute=d,reactiontype=r,seed=seed)
-            cells.run_all(T,dt,f"Cells{Nc}_Ch{M}_r{nr}_{r}_{d}_seed{seed}_{today}")
-            seed+=1
+
 
 def run_allconds(T=1000,dt=0.01,Nc=200,
                  rtype=["random","lattice","cascade","pararell","forward","backward" "feedback"],
-                 diftype=["gradient","gradient_exp","reverse","reverse_exp","random","constant"] ):
+                 diftype=["gradient","gradient_exp","reverse","reverse_exp","random","constant"],
+                 growth=False):
     seed=0
+    #now=datetime.datetime.now()
+    today=str(datetime.datetime.now()).split(".")[0].replace(" ","_").replace(":","_")
+    os.makedirs(today, exist_ok=True)
     for r in rtype:
         for d in diftype:
             for M in [30,50,100,500]:
                 for nr in [0.1,0.5,0.8]:
-                    now=datetime.datetime.now()
-                    today=f"{now.year}:{now.month}:{now.date}_{now.hour}:{now.minute}:{now.second}"
                     Nr=int(M*nr)
                     externalchemicals=[sample(seed) for _ in range(M)]
-                    cells=Cells(Nc,M,Nr,externalchemicals,dilute=d,reactiontype=r,seed=seed)
-                    cells.run_all(T,dt,f"Cells{Nc}_Ch{M}_r{nr}_{r}_{d}_seed{seed}_{today}")
+                    cells=Cells(Nc,M,Nr,externalchemicals,dilute=d,reactiontype=r,seed=seed,growth=growth)
+                    name=f"N{Nc}_Ch{M}_r{nr}_{r}_{d}_seed{seed}"
+                    if(growth):
+                        name+="_g"
+                    cells.run_all(T,dt,name,today)
                     seed+=1
 
+def run_default(T=1000,dt=0.01,Nc=200,r="random",d="gradient",growth=False):
+    run_allconds(T,dt,Nc,[r],[d],growth)
+
 if __name__=="__main__":
-    dt=0.01        
-    T=1000
-    Nc=200
-    run_allconds(T=1000,dt=0.01,Nc=200,rtype=["random","cascade"],diftype=["gradient"])
+    import argparse
+    parser = argparse.ArgumentParser(description="Multi Cells simulator & entropy production calculation")
+    parser.add_argument("--T", type=int, default=2000, help="Simulation time")
+    parser.add_argument("--dt", type=float, default=0.01, help="time step")
+    parser.add_argument("--N", type=int, default=200, help="num of cells")
+    parser.add_argument("--M", type=int, default=100, help="num of chemical spieses")
+    parser.add_argument("--g",  action="store_true")
+    args = parser.parse_args()
+
+    run_default(T=args.T,dt=args.dt,Nc=args.N,growth=True)
+    run_default(T=args.T,dt=args.dt,Nc=args.N,growth=False)
+                 
