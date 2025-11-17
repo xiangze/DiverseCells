@@ -112,6 +112,16 @@ class Cells():
 
         self.valuecheck()
 
+    def show(self):
+        for i,c in enumerate(self.cells):
+            print(f"{i}th cell:")
+            print(c.chemicals)
+        print("Reactions:")
+        for i,r in enumerate(self.reactions):
+            print(f"{i}th reaction: source:{r.source} target:{r.target} enzymes:{r.enzymes}")
+        print("Diffusions:")
+        for i,d in enumerate(self.Ds):
+            print(f"{i}th chemical: global:{d['global']} inter:{d['inter']}")
 
     def valuecheck(self):
         for c in self.cells:
@@ -267,6 +277,8 @@ def run_allconds(T=1000,dt=0.01,Nc=200,
                     Nr=int(M*nr)
                     externalchemicals=[sample(seed) for _ in range(M)]
                     cells=Cells(Nc,M,Nr,externalchemicals,dilute=d,reactiontype=r,seed=seed,growth=growth)
+                    
+                    cells.show()
                     name=f"N{Nc}_Ch{M}_r{nr}_{r}_{d}_seed{seed}"
                     if(growth):
                         name+="_g"
