@@ -11,11 +11,14 @@ import datetime
 import os
 import warnings
 
-@dataclass
 class Reaction():
     source:typing.List[int]
     target:typing.List[int]
     enzymes:typing.List[int]
+    def __init__(self,s,t,enz):
+        self.source=s
+        self.target=t
+        self.enzymes=enz
     def ps(self,c)->float:#forward
         return self.enzymes[0]*np.prod([c.chemicals[i] for i in self.source])
     def pt(self,c)->float:#backward
@@ -111,6 +114,16 @@ class Cells():
             print("diluut mode are[gradient,gradient_exp,reverse,random,constant]")
 
         self.initcheck()
+    def initcheck(self):
+        for c in self.cells:
+            for i in c.chemicals:    
+                assert(i>0)            
+        for d in self.Ds:
+            assert(d["global"]>0)
+            assert(d["inter"]>0)
+        for r in self.reactions:
+            print(r.enzymes)
+            assert((r.enzymes[0]>0 and r.enzymes[1]>0),f"enzyme rate must be positive{r.enzymes[0]},{r.enzymes[1]} ")
 
     def show(self):
         for i,c in enumerate(self.cells):
@@ -123,16 +136,6 @@ class Cells():
         for i,d in enumerate(self.Ds):
             print(f"{i}th chemical: global:{d['global']} inter:{d['inter']}")
 
-    def initcheck(self):
-        for c in self.cells:
-            for i in c.chemicals:    
-                assert(i>0)            
-        for d in self.Ds:
-            assert(d["global"]>0)
-            assert(d["inter"]>0)
-        for r in self.reactions:
-            for e in r.enzymes:
-                assert((e[0]>0 and e[1]>0),f"enzyme rate must be positive{e[0]},{e[1]} ")
 
     def calcVolume(self,c:Cell)->float:
         return np.sum(c.chemicals)
@@ -155,7 +158,10 @@ class Cells():
                 EP+=self.Ds[p]["inter"]*(self.cells[(i-1+N)%N].chemicals[p]-c.chemicals[p])
                 EP+=self.Ds[p]["inter"]*(c.chemicals[p]-self.cells[(i+1)%N].chemicals[p])
                 #dilutons?
-                EP+=self.Ds[p]["global"]*calcep(self.externalchemicals[p] ,c.chemicals[p])
+                try:
+                    EP+=self.Ds[p]["global"]*calcep(self.externalchemicals[p] ,c.chemicals[p])
+                except:
+                    print(i,"cell",self.externalchemicals[p], c.chemicals[p])
         return EP
     
     def calcEP(self,ci:int):
@@ -236,8 +242,8 @@ class Cells():
         totEnt=[]
         self.initcheck()
         for t in range(T):
-            self.run(dt)
             self.check(t)
+            self.run(dt)
             if(t%peri==0):
                 eps=self.calcTotalEP()
                 epss.append(eps)
@@ -289,8 +295,6 @@ def run_allconds(T=1000,dt=0.01,Nc=200,M=10,
                     Nr=int(M*nr)
                     externalchemicals=[sample(seed) for _ in range(M)]
                     cells=Cells(Nc,Mc,Nr,externalchemicals,dilute=d,reactiontype=r,seed=seed,growth=growth)
-                    
-                    cells.show()
                     name=f"N{Nc}_Ch{Mc}_r{nr}_{r}_{d}_seed{seed}"
                     if(growth):
                         name+="_g"
