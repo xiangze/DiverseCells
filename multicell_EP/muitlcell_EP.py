@@ -110,7 +110,7 @@ class Cells():
         else:
             print("diluut mode are[gradient,gradient_exp,reverse,random,constant]")
 
-        self.valuecheck()
+        self.initcheck()
 
     def show(self):
         for i,c in enumerate(self.cells):
@@ -123,14 +123,16 @@ class Cells():
         for i,d in enumerate(self.Ds):
             print(f"{i}th chemical: global:{d['global']} inter:{d['inter']}")
 
-    def valuecheck(self):
+    def initcheck(self):
         for c in self.cells:
-            for i in c.chemicals:
+            for i in c.chemicals:    
                 assert(i>0)            
-
+        for d in self.Ds:
+            assert(d["global"]>0)
+            assert(d["inter"]>0)
         for r in self.reactions:
             for e in r.enzymes:
-                assert(e>0)
+                assert((e[0]>0 and e[1]>0),f"enzyme rate must be positive{e[0]},{e[1]} ")
 
     def calcVolume(self,c:Cell)->float:
         return np.sum(c.chemicals)
@@ -198,10 +200,12 @@ class Cells():
                         nc.chemicals[p]=c.chemicals[p]-r.pt(c)*dt
                     elif(p in r.target):
                         nc.chemicals[p]=c.chemicals[p]+r.ps(c)*dt
+                self.check(0,"after reaction")
                 #diffusions            
                 nc.chemicals[p]+=self.Ds[p]["inter"]*(self.cells[(i-1+N)%N].chemicals[p]+self.cells[(i+1)%N].chemicals[p]-2*c.chemicals[p])*dt
                 #dilutons?
                 nc.chemicals[p]+=self.Ds[p]["global"]*(self.externalchemicals[p] -c.chemicals[p])*dt
+
             if(self.growth):
                 gamma=self.calcVolume(c)
                 for p in range(len(c.chemicals)):
@@ -217,15 +221,23 @@ class Cells():
                 self.cells.insert(i,ncell)
                 self.Nc=self.Nc+1
 
+    def check(self,t,msg=""):
+        for i,c in enumerate(self.cells):
+            for p in c.chemicals:
+                if(p<0):
+                    print(f"Error: {t}th step {i}th cell negative chemical concentration {p} at {msg}")
+                assert(p>=0,f"negative chemical concentration{i},{c},{p}")
 
     def run_all(self,T,dt=0.05,suffix="",ddir="",peri=100,debug=False,plot=True):
+        if(T<peri):
+            peri=T
         epss=[]
         history=[]
         totEnt=[]
+        self.initcheck()
         for t in range(T):
-            if(debug):
-                print(t)
             self.run(dt)
+            self.check(t)
             if(t%peri==0):
                 eps=self.calcTotalEP()
                 epss.append(eps)
@@ -262,7 +274,7 @@ class Cells():
 
 
 
-def run_allconds(T=1000,dt=0.01,Nc=200,
+def run_allconds(T=1000,dt=0.01,Nc=200,M=10,
                  rtype=["random","lattice","cascade","pararell","forward","backward" "feedback"],
                  diftype=["gradient","gradient_exp","reverse","reverse_exp","random","constant"],
                  growth=False):
@@ -272,21 +284,21 @@ def run_allconds(T=1000,dt=0.01,Nc=200,
     os.makedirs(today, exist_ok=True)
     for r in rtype:
         for d in diftype:
-            for M in [30,50,100,500]:
+            for Mc in [M,30,50,100,500]:
                 for nr in [0.1,0.5,0.8]:
                     Nr=int(M*nr)
                     externalchemicals=[sample(seed) for _ in range(M)]
-                    cells=Cells(Nc,M,Nr,externalchemicals,dilute=d,reactiontype=r,seed=seed,growth=growth)
+                    cells=Cells(Nc,Mc,Nr,externalchemicals,dilute=d,reactiontype=r,seed=seed,growth=growth)
                     
                     cells.show()
-                    name=f"N{Nc}_Ch{M}_r{nr}_{r}_{d}_seed{seed}"
+                    name=f"N{Nc}_Ch{Mc}_r{nr}_{r}_{d}_seed{seed}"
                     if(growth):
                         name+="_g"
                     cells.run_all(T,dt,name,today)
                     seed+=1
 
-def run_default(T=1000,dt=0.01,Nc=200,r="random",d="gradient",growth=False):
-    run_allconds(T,dt,Nc,[r],[d],growth)
+def run_default(T=1000,dt=0.01,Nc=200,M=10,r="random",d="gradient",growth=False):
+    run_allconds(T,dt,Nc,M,[r],[d],growth)
 
 if __name__=="__main__":
     import argparse
@@ -298,6 +310,7 @@ if __name__=="__main__":
     parser.add_argument("--g",  action="store_true")
     args = parser.parse_args()
 
-    run_default(T=args.T,dt=args.dt,Nc=args.N,growth=True)
-    run_default(T=args.T,dt=args.dt,Nc=args.N,growth=False)
+    run_default(T=args.T,dt=args.dt,Nc=args.N,M=args.M,growth=False)
+    #run_default(T=args.T,dt=args.dt,Nc=args.N,growth=True)
+    
                  
