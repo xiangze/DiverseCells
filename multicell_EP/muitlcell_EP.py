@@ -20,18 +20,18 @@ class Reaction():
         self.target=t
         self.enzymes=enz
     def ps(self,c)->float:#forward
-        return self.enzymes[0]*np.prod([c.chemicals[i] for i in self.source])
+        return c.chemicals[self.enzymes[0]]*np.prod([c.chemicals[i] for i in self.source])
     def pt(self,c)->float:#backward
-        return self.enzymes[1]*np.prod([c.chemicals[i] for i in self.target])
-
+        return c.chemicals[self.enzymes[1]]*np.prod([c.chemicals[i] for i in self.target])
+    
 @dataclass    
 class Reaction_nlin(Reaction):
     sigma:float=1.
     th:float=1.
     def ps(self,cell):#forward
-        return np.tanh(self.enzymes[0]*np.prod([cell.chemicals[i] for i in self.source])-self.th)
+        return np.tanh(cell.chemicals[self.enzymes[0]]*np.prod([cell.chemicals[i] for i in self.source])-self.th)
     def pt(self,cell):#backward
-        return np.tanh(self.enzymes[1]*np.prod([cell.chemicals[i] for i in self.target])-self.th)
+        return np.tanh(cell.chemicals[self.enzymes[1]]*np.prod([cell.chemicals[i] for i in self.target])-self.th)
         
 @dataclass    
 class Cell():
@@ -45,12 +45,17 @@ def calcEP(p:float):
     else:
         return 0.
     
+MAXFLOAT=sys.float_info.max
+
 warnings.simplefilter('error')
 def calcep(ps,pt):
-    try:
-        return (ps-pt)*np.log(ps/pt)
-    except:
-        print(ps,pt)
+    if(ps<=0 or pt<=0):
+        return MAXFLOAT
+    else:
+        try:
+            return (ps-pt)*np.log(ps/pt)
+        except:
+            print(ps,pt)
 
 def calcReactionEP(cell:Cell,reactions:typing.List[Reaction])->float:
     ep=0
@@ -88,7 +93,7 @@ class Cells():
             num=5
             Nrr=Nr-1
             Nr=Nr*num
-            self.reactions=[ Reaction([i+n*Nrr],[(n*N)*i+1],[max(n*N+i+2,N*M),min(n*N+i-2,0)]) for i in range(Nrr) for n in range(num)] 
+            self.reactions=[ Reaction([i+n*Nrr],[(n*Nrr)*i+1],[max(n*Nrr+i+2,Nrr*M),min(n*Nrr+i-2,0)]) for i in range(Nrr) for n in range(num)] 
         elif(reactiontype=="forward"): #like Resnet
             self.reactions=[ Reaction([i],[i+1],[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)]             
             self.reactions+=[ Reaction([i],[min(i+5)],[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)] #feed            
@@ -114,6 +119,7 @@ class Cells():
             print("diluut mode are[gradient,gradient_exp,reverse,random,constant]")
 
         self.initcheck()
+
     def initcheck(self):
         for c in self.cells:
             for i in c.chemicals:    
@@ -123,7 +129,7 @@ class Cells():
             assert(d["inter"]>0)
         for r in self.reactions:
             print(r.enzymes)
-            assert((r.enzymes[0]>0 and r.enzymes[1]>0),f"enzyme rate must be positive{r.enzymes[0]},{r.enzymes[1]} ")
+    
 
     def show(self):
         for i,c in enumerate(self.cells):
@@ -232,7 +238,7 @@ class Cells():
             for p in c.chemicals:
                 if(p<0):
                     print(f"Error: {t}th step {i}th cell negative chemical concentration {p} at {msg}")
-                assert(p>=0,f"negative chemical concentration{i},{c},{p}")
+                assert p>=0,f"negative chemical concentration{i},{c},{p}"
 
     def run_all(self,T,dt=0.05,suffix="",ddir="",peri=100,debug=False,plot=True):
         if(T<peri):
