@@ -41,26 +41,24 @@ class Cell():
 
 def calcEP(p:float):
     if(p>0.):
-        return p*np.log(p) 
+        return -p*np.log(p) 
     else:
         return 0.
     
 MAXFLOAT=sys.float_info.max
 
 warnings.simplefilter('error')
-def calcep(ps,pt):
-    if(ps<=0 or pt<=0):
-        return MAXFLOAT
+
+def calcepr(ps,pt):
+    if(ps>pt):
+        return (ps-pt)*np.log(ps/pt)
     else:
-        try:
-            return (ps-pt)*np.log(ps/pt)
-        except:
-            print(ps,pt)
+        return (pt-ps)*np.log(pt/ps)
 
 def calcReactionEP(cell:Cell,reactions:typing.List[Reaction])->float:
     ep=0
     for r in reactions:#反応種ごと
-        ep+=2*calcep(r.ps(cell),r.pt(cell))
+        ep+=2*calcepr(r.ps(cell),r.pt(cell))
     return ep
 
 sample=lambda r=1e-8:npr.random_sample()+r
@@ -105,11 +103,11 @@ class Cells():
 
         if(dilute=="gradient"):# 奥(index大)のほうが小さい
             self.Ds=[{"global":sample((M-i)*0.1), "inter":sample((M-i)*0.1)} for i in range(M)]
-        elif(dilute=="reverse"):# 奥(index大)のほうが小さい            
+        elif(dilute=="reverse"):# 奥(index大)のほうが大きい
             self.Ds=[{"global":sample((i+1)*0.1), "inter":sample((i+1)*0.1)} for i in range(M)]
         elif(dilute=="gradient_exp"):# 奥(index大)のほうが小さい
             self.Ds=[{"global":sample(2**((M-i)/M)), "inter":sample(2**((M-i)/M))} for i in range(M)]
-        elif(dilute=="reverse_exp"):# 奥(index大)のほうが小さい
+        elif(dilute=="reverse_exp"):# 奥(index大)のほうが大きい
             self.Ds=[{"global":sample(2**(i/M)), "inter":sample(2**(i/M))} for i in range(M)]
         elif(dilute=="random"):
             self.Ds=[{"global":sample(), "inter":sample()} for _ in range(M)]
@@ -117,31 +115,6 @@ class Cells():
             self.Ds=[{"global":1, "inter":1.5} for _ in range(M)]
         else:
             print("diluut mode are[gradient,gradient_exp,reverse,random,constant]")
-
-        self.initcheck()
-
-    def initcheck(self):
-        for c in self.cells:
-            for i in c.chemicals:    
-                assert(i>0)            
-        for d in self.Ds:
-            assert(d["global"]>0)
-            assert(d["inter"]>0)
-        for r in self.reactions:
-            print(r.enzymes)
-    
-
-    def show(self):
-        for i,c in enumerate(self.cells):
-            print(f"{i}th cell:")
-            print(c.chemicals)
-        print("Reactions:")
-        for i,r in enumerate(self.reactions):
-            print(f"{i}th reaction: source:{r.source} target:{r.target} enzymes:{r.enzymes}")
-        print("Diffusions:")
-        for i,d in enumerate(self.Ds):
-            print(f"{i}th chemical: global:{d['global']} inter:{d['inter']}")
-
 
     def calcVolume(self,c:Cell)->float:
         return np.sum(c.chemicals)
@@ -165,7 +138,7 @@ class Cells():
                 EP+=self.Ds[p]["inter"]*(c.chemicals[p]-self.cells[(i+1)%N].chemicals[p])
                 #dilutons?
                 try:
-                    EP+=self.Ds[p]["global"]*calcep(self.externalchemicals[p] ,c.chemicals[p])
+                    EP+=self.Ds[p]["global"]*calcepr(self.externalchemicals[p] ,c.chemicals[p])
                 except:
                     print(i,"cell",self.externalchemicals[p], c.chemicals[p])
         return EP
@@ -206,40 +179,60 @@ class Cells():
             if(debug):
                 print(f"{i}th cell")
             for p in range(len(c.chemicals)):#chemical index
-                nc.chemicals[p]=c.chemicals[p]                
+                #nc.chemicals[p]=c.chemicals[p]                
                 for r in self.reactions: #chemical reactions
                     if(p in r.source):
                         nc.chemicals[p]=c.chemicals[p]-r.pt(c)*dt
                     elif(p in r.target):
                         nc.chemicals[p]=c.chemicals[p]+r.ps(c)*dt
-                self.check(0,"after reaction")
+                self.ncheck(nc,0,"after reaction")
                 #diffusions            
                 nc.chemicals[p]+=self.Ds[p]["inter"]*(self.cells[(i-1+N)%N].chemicals[p]+self.cells[(i+1)%N].chemicals[p]-2*c.chemicals[p])*dt
                 #dilutons?
                 nc.chemicals[p]+=self.Ds[p]["global"]*(self.externalchemicals[p] -c.chemicals[p])*dt
-
+                self.ncheck(nc,1,"after diffusion")
             if(self.growth):
                 gamma=self.calcVolume(c)
                 for p in range(len(c.chemicals)):
                     nc.chemicals[p]-=gamma*c.chemicals[p]*dt
+                self.ncheck(nc,2,"after growth")
         self.cells=ncells
 
     def divide(self):
         for i,c in enumerate(self.cells):
             if(self.calcVolume(c)>self.maxV):
-                ncell=copy.deep(self.c)
+                ncell=copy.deepcopy(self.c)
                 for p in range(len(c.chemicals)):
                     ncell.chemicals[p]+=sample()*1e-7
                 self.cells.insert(i,ncell)
                 self.Nc=self.Nc+1
 
+    def initcheck(self):
+        for c in self.cells:
+            for i in c.chemicals:    
+                assert(i>0 and i<1e6)            
+        for d in self.Ds:
+            assert(d["global"]>0)
+            assert(d["inter"]>0)
+        print("reactions")
+        for i in  self.reactions:
+            print(i.source,i.target,i.enzymes)
+        print("diffusions")
+        for d in self.Ds:
+            print(d["global"],d["inter"])
+
+    def ncheck(self,nc,t,msg=""):
+        for i,p in enumerate(nc.chemicals):
+            assert p>=0,f"negative chemical concentration t={t} {i}th,{p} {msg}"
+            assert p<1e6,f"chemical concentration too large t={t} {i}th,{p} {msg}"            
+
+
     def check(self,t,msg=""):
         for i,c in enumerate(self.cells):
             for p in c.chemicals:
-                if(p<0):
-                    print(f"Error: {t}th step {i}th cell negative chemical concentration {p} at {msg}")
-                assert p>=0,f"negative chemical concentration{i},{c},{p}"
-
+                assert p>=0,f"negative chemical concentration t={t} {i}th,{c},{p} {msg}"
+                assert p<1e6,f"chemical concentration too large t={t} {i}th,{c},{p} {msg}"            
+                
     def run_all(self,T,dt=0.05,suffix="",ddir="",peri=100,debug=False,plot=True):
         if(T<peri):
             peri=T
@@ -272,6 +265,17 @@ class Cells():
             plt.clf()
             plt.close()
 
+    def show(self):
+        for i,c in enumerate(self.cells):
+            print(f"{i}th cell:")
+            print(c.chemicals)
+        print("Reactions:")
+        for i,r in enumerate(self.reactions):
+            print(f"{i}th reaction: source:{r.source} target:{r.target} enzymes:{r.enzymes}")
+        print("Diffusions:")
+        for i,d in enumerate(self.Ds):
+            print(f"{i}th chemical: global:{d['global']} inter:{d['inter']}")
+
     def plots(self,suffix,ddir):
         for k,v in {"history":self.history,"EP":self.EP,"totalEntropy":self.totEnt}.items():
             plt.plot(v)
@@ -285,26 +289,30 @@ class Cells():
         np.savetxt(f"{ddir}/history_{suffix}.csv",self.history)
 
 
-
+def run_conds(T=1000,dt=0.01,Nc=200,M=10,r=0.6,rtype="random",dilute="gradient",growth=False,seed=0,outdir="outputs"):
+    #today=str(datetime.datetime.now()).split(".")[0].replace(" ","_").replace(":","_")
+    #os.makedirs(today, exist_ok=True)    
+    Nr=int(M*r)
+    externalchemicals=[sample(seed) for _ in range(M)]
+    cells=Cells(Nc,M,Nr,externalchemicals,dilute=dilute,reactiontype=rtype,seed=seed,growth=growth)
+    name=f"N{Nc}_Ch{M}_r{r}_{rtype}_{dilute}_seed{seed}"
+    if(growth):
+        name+="_g"
+    cells.run_all(T,dt,name,ddir=outdir,peri=100)
+                 
 def run_allconds(T=1000,dt=0.01,Nc=200,M=10,
                  rtype=["random","lattice","cascade","pararell","forward","backward" "feedback"],
                  diftype=["gradient","gradient_exp","reverse","reverse_exp","random","constant"],
                  growth=False):
     seed=0
     #now=datetime.datetime.now()
-    today=str(datetime.datetime.now()).split(".")[0].replace(" ","_").replace(":","_")
-    os.makedirs(today, exist_ok=True)
+    #today=str(datetime.datetime.now()).split(".")[0].replace(" ","_").replace(":","_")
+    #os.makedirs(today, exist_ok=True)
     for r in rtype:
         for d in diftype:
             for Mc in [M,30,50,100,500]:
                 for nr in [0.1,0.5,0.8]:
-                    Nr=int(M*nr)
-                    externalchemicals=[sample(seed) for _ in range(M)]
-                    cells=Cells(Nc,Mc,Nr,externalchemicals,dilute=d,reactiontype=r,seed=seed,growth=growth)
-                    name=f"N{Nc}_Ch{Mc}_r{nr}_{r}_{d}_seed{seed}"
-                    if(growth):
-                        name+="_g"
-                    cells.run_all(T,dt,name,today)
+                    run_conds(T,dt,Nc,Mc,r,nr,rtype=r,dilute=d,growth=growth,seed=seed,outdir="outputs")
                     seed+=1
 
 def run_default(T=1000,dt=0.01,Nc=200,M=10,r="random",d="gradient",growth=False):
@@ -317,10 +325,18 @@ if __name__=="__main__":
     parser.add_argument("--dt", type=float, default=0.01, help="time step")
     parser.add_argument("--N", type=int, default=200, help="num of cells")
     parser.add_argument("--M", type=int, default=100, help="num of chemical spieses")
+    parser.add_argument("--r", type=float, default=0.6, help="density ratio of chemical reactions")
     parser.add_argument("--g",  action="store_true")
+    parser.add_argument("--all",  action="store_true")
+    parser.add_argument("--default",  action="store_true")
     args = parser.parse_args()
+    if(args.all):
+        run_allconds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,growth=args.g)
+    elif(args.default):
+        run_default(T=args.T,dt=args.dt,Nc=args.N,growth=args.g)
+    else:
+        run_conds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,r=args.r,rtype="random",dilute="gradient",growth=args.g,seed=0)    
 
-    run_default(T=args.T,dt=args.dt,Nc=args.N,M=args.M,growth=False)
-    #run_default(T=args.T,dt=args.dt,Nc=args.N,growth=True)
     
+
                  
