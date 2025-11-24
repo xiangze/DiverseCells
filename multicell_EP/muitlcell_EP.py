@@ -16,7 +16,7 @@ sample=lambda r=1e-8:npr.random_sample()+r
 randint=npr.randint
 
 MAXFLOAT=sys.float_info.max
-warnings.simplefilter('error')
+#warnings.simplefilter('error')
 
 def calcepr(ps:float,pt:float):
     d=(ps>pt)*(ps-pt)+(ps<pt)*(pt-ps)
@@ -165,8 +165,11 @@ class Cells():
 
     def population(self):
         return np.sum(self.cells) #[c.chemicals for c in self.cells]
-    def Volume(self,ci)->float:
-        return np.sum(self.cells[ci])
+    def Volume(self)->float: #Nc
+        return np.sum(self.cells,axis=0)
+    def cellVolume(self,cell)->float: #Nc
+        return np.sum(cell)
+    
     def totalChemical(self)->float:#M
         return np.sum(self.cells,axis=1)
 
@@ -177,9 +180,9 @@ class Cells():
         return np.sum([self.ReactionEPR(c) for c in self.cells])
 
     def DiffusionEPR(self):
-        return self.diffusion_coef*calcepr(np.roll(self.cells,1)+np.roll(self.cells,-1),2*self.cells)
+        return np.sum(self.diffusion_coef*calcepr(np.roll(self.cells,1)+np.roll(self.cells,-1),2*self.cells))
     def DilutionEPR(self):
-        return self.dilution_coef*calcepr(self.externalchemicals ,self.cells)
+        return np.sum(self.dilution_coef*calcepr(self.externalchemicals ,self.cells))
     
     def TotalEPR(self):
         return self.TotalReactionEPR()+self.DiffusionEPR()+self.DilutionEPR()
@@ -203,7 +206,7 @@ class Cells():
 
     def Entropies(self,dt):
         Edif,EP=self.TotalEntropy(dt)
-        return {"staticdif":Edif,"EPR":EP,"dif":Edif-EP}
+        return {"staticdif":Edif,"EP":EP,"dif":Edif-EP}
     
     def Entropy_dif(self,dt):
         Ed,EP=self.TotalEPR(dt)
@@ -230,15 +233,18 @@ class Cells():
         ncells+=self.diffusion_coef*(np.roll(self.cells,1)+np.roll(self.cells,-1)-2*self.cells)*dt
         ncells+=self.dilution_coef*(self.externalchemicals -self.cells)*dt
 
-        if(self.growth):
-            gamma=self.Volume()
-            ncells=gamma*self.cells*dt
+        if(not self.growth):
+            V=self.Volume()
+            self.Vrate=(V-self.V)/dt #self.V as previous V
+            growthrate=self.Vrate/V
+            self.V=V
+            ncells=growthrate*self.cells*dt
         ncells.clip(0) #数値不安定対策
         self.cells=ncells
 
     def divide(self):
         for i,c in enumerate(self.cells):
-            if(self.Volume(c)>self.maxV):
+            if(self.cellVolume(c)>self.maxV):
                 ncell=copy.deepcopy(self.c)
                 for p in range(len(c)):
                     ncell[p]+=sample()*1e-7
@@ -274,26 +280,21 @@ class Cells():
         totEnt=[]
         self.initcheck()
         for t in range(T):
-            self.check(t)
+            #self.check(t)
             self.run(dt)
             if(t%peri==0):
                 history.append(self.population())
                 totEnt.append(self.Entropies(dt))
-
                 if(self.growth):
                     self.divide()
-
         self.totEnt=totEnt
-        self.history=np.array(history) #.reshape(self.totsize,T//peri)
-        if(debug):
-            print(self.totEnt)            
-            print(self.history)
+        self.history=np.array(history) 
         self.save(suffix,ddir)
 
         if(plot):        
             self.plots(suffix,ddir)
             for p in range(self.M):
-                celldist=[ c.chemicals[p] for c in self.cells]
+                celldist=[ c[p] for c in self.cells]
                 plt.plot(celldist)
             plt.savefig(f"{ddir}/last_cell_distribusion_{suffix}.png")            
             plt.clf()
@@ -311,22 +312,25 @@ class Cells():
             print(f"{i}th chemical: global:{d['global']} inter:{d['inter']}")
 
     def plots(self,suffix,ddir):
-        for k,v in {"history":self.history,"EP":self.EP,"totalEntropy":self.totEnt}.items():
+        for k,v in {"history":self.history,"EP":self.EP,"staticEntropy":self.staticEntropy}.items():
             plt.plot(v)
             plt.savefig(f"{ddir}/{k}_{suffix}.png")            
             plt.clf()
             plt.close()
 
     def save(self,suffix,ddir):
-        tmp={"staticdif":[],"EPR":[],"dif":[]}
+        tmp={"staticdif":[],"EP":[],"dif":[]}
         for l in self.totEnt:
             for k in tmp:
                 tmp[k].append(l[k])
         for k in tmp:                
             tmp[k]=np.array(tmp[k])
-            np.savetxt(f"{ddir}/totalEntropy__{k}_{suffix}.csv",tmp[k])
-
-        np.savetxt(f"{ddir}/EntropyProd_{suffix}.csv",self.EP)
+            try:
+                np.savetxt(f"{ddir}/totalEntropy__{k}_{suffix}.csv",tmp[k])
+            except:
+                print(k,tmp[k].shape)
+        self.EP=tmp["EP"]
+        self.staticEntropy=tmp["staticdif"]
         np.savetxt(f"{ddir}/history_{suffix}.csv",self.history)
 
 
@@ -357,6 +361,17 @@ def run_allconds(T=1000,dt=0.01,Nc=200,M=10,
 def run_default(T=1000,dt=0.01,Nc=200,M=10,r="random",d="gradient",growth=False):
     run_allconds(T,dt,Nc,M,rtype=[r],diftype=[d],growth=growth)
 
+def run_small(T,dt,rtype=["random","cascade"],
+              diftype=["gradient","reverse","random"],growth=False):
+    seed=0
+    for r in rtype:
+        for d in diftype:
+            for Nc in [10,20,50]:
+                for Mc in [10,20,50]:
+                    for nr in [0.1,0.3,0.5]:
+                        run_conds(T,dt,Nc,Mc,nr,rtype=r,dilute=d,growth=growth,seed=seed,outdir="outputs")
+                        seed+=1
+
 if __name__=="__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Multi Cells simulator & entropy production calculation")
@@ -369,11 +384,15 @@ if __name__=="__main__":
     parser.add_argument("--all",  action="store_true")
     parser.add_argument("--default",  action="store_true")
     parser.add_argument("--debug",  action="store_true")
+    parser.add_argument("--small",  action="store_true")
     args = parser.parse_args()
     if(args.all):
         run_allconds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,growth=args.g)
     elif(args.default):
         run_default(T=args.T,dt=args.dt,Nc=args.N,growth=args.g)
+    elif(args.small):
+        run_small(T=args.T,dt=args.dt,growth=False)    
+        run_small(T=args.T,dt=args.dt,growth=True)    
     else:
         run_conds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,r=args.r,rtype="random",dilute="gradient",growth=args.g,seed=0,debug=True)    
 
