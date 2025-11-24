@@ -12,6 +12,22 @@ import datetime
 import os
 import warnings
 
+sample=lambda r=1e-8:npr.random_sample()+r
+randint=npr.randint
+
+MAXFLOAT=sys.float_info.max
+warnings.simplefilter('error')
+
+def calcepr(ps:float,pt:float):
+    d=(ps>pt)*(ps-pt)+(ps<pt)*(pt-ps)
+    return d*np.log(d)
+
+def calcEP(p:float):
+    if(p>0.):
+        return -p*np.log(p) 
+    else:
+        return 0.
+
 @dataclass    
 class Cell():
     chemicals:npt.ArrayLike
@@ -33,30 +49,6 @@ class Reaction():
         return c.chemicals[self.enzymes[1]]*np.prod([c.chemicals[i] for i in self.target])
 
 @dataclass    
-class Reaction1():
-    source:int #index
-    target:int #index
-    enzymes:typing.List[int] #index
-    def __init__(self,s,t,enz):
-        self.source=s
-        self.target=t
-        self.enzymes=enz
-    def ps(self,c:Cell)->float:#forward
-        return c.chemicals[self.enzymes[0]]*c.chemicals[self.source]
-    def pt(self,c:Cell)->float:#backward
-        return c.chemicals[self.enzymes[1]]*c.chemicals[self.target]
-    
-    #forward
-    def ps_s(self,cells:npt.ArrayLike)->float: 
-        return cells[self.enzymes[0]]*cells[self.source]
-    #backward
-    def pt_s(self,cells:npt.ArrayLike)->float: 
-        return cells[self.enzymes[1]]*cells[self.target]
-    
-    def calcepr(self,cell):
-        return calcepr(self.ps_s(cell),self.pt_s(cell))
-        
-@dataclass    
 class Reaction_nlin(Reaction):
     sigma:float=1.
     th:float=1.
@@ -66,42 +58,48 @@ class Reaction_nlin(Reaction):
         return np.tanh(cell.chemicals[self.enzymes[1]]*np.prod([cell.chemicals[i] for i in self.target])-self.th)
 
 @dataclass    
+class Reaction1():
+    source:int #index
+    target:int #index
+    enzymes:typing.List[int] #index
+    def __init__(self,s,t,enz):
+        self.source=s
+        self.target=t
+        self.enzymes=enz
+    #forward
+    def ps_c(self,cell:npt.ArrayLike)->float: 
+        return cell[self.enzymes[0]]*cell[self.source]
+    #backward
+    def pt_c(self,cell:npt.ArrayLike)->float: 
+        return cell[self.enzymes[1]]*cell[self.target]
+
+    def ps_cells(self,cells:npt.ArrayLike)->float: #NcxNm
+        return cells[:,self.enzymes[0]]*cells[:,self.source]
+
+    def pt_cells(self,cells:npt.ArrayLike)->float: #NcxNm
+        return cells[:,self.enzymes[1]]*cells[:,self.target]
+    
+    def calcepr(self,cell):
+        return calcepr(self.ps_c(cell),self.pt_c(cell))
+
+@dataclass    
 class Reaction_nlin1(Reaction1):
     sigma:float=1.
     th:float=1.
-    def ps(self,cell:Cell):#forward
-        return np.tanh(cell.chemicals[self.enzymes[0]]*cell.chemicals[self.source]-self.th)
-    def pt(self,cell:Cell):#backward
-        return np.tanh(cell.chemicals[self.enzymes[1]]*cell.chemicals[self.target]-self.th)
     #forward
-    def ps_s(self,cells:npt.ArrayLike)->float: #NcxNm
-        return np.tanh(cells[:,self.enzymes[0]]*cells[:,self.source]-self.th)
+    def ps_c(self,cell:npt.ArrayLike)->float: 
+        return np.tanh(self.sigma*cell[self.enzymes[0]]*cell[self.source]-self.th)
     #backward
-    def pt_s(self,cells:npt.ArrayLike)->float: #NcxNm
-        return np.tanh(cells[:,self.enzymes[1]]*cells[:,self.target]-self.th)
+    def pt_c(self,cell:npt.ArrayLike)->float: 
+        return np.tanh(self.sigma*cell[self.enzymes[1]]*cell[self.target]-self.th)
 
+    #forward
+    def ps_cells(self,cells:npt.ArrayLike)->float: #NcxNm
+        return np.tanh(self.sigma*cells[:,self.enzymes[0]]*cells[:,self.source]-self.th)
+    #backward
+    def pt_cells(self,cells:npt.ArrayLike)->float: #NcxNm
+        return np.tanh(self.sigma*cells[:,self.enzymes[1]]*cells[:,self.target]-self.th)
 
-def calcEP(p:float):
-    if(p>0.):
-        return -p*np.log(p) 
-    else:
-        return 0.
-    
-MAXFLOAT=sys.float_info.max
-warnings.simplefilter('error')
-
-def calcepr(ps,pt):
-    if(ps>pt):
-        return (ps-pt)*np.log(ps/pt)
-    else:
-        return (pt-ps)*np.log(pt/ps)
-    #assert(epr>0)
-
-def calcReactionEPR(cell:Cell,reactions:typing.List[Reaction1])->float:
-    return  np.sum(np.array([ 2*calcepr(r.ps(cell),r.pt(cell)) for r in reactions])) #反応種ごと
-    
-sample=lambda r=1e-8:npr.random_sample()+r
-randint=npr.randint
 
 class Cells():
     """
@@ -163,54 +161,53 @@ class Cells():
                       }
         self.dilution_coef=np.array([d["global"] for d in self.Ds])
         self.diffusion_coef=np.array([d["inter"] for d in self.Ds])
+        print("Cells shape",self.cells.shape)
 
-    def calcVolume(self,ci)->float:
+    def population(self):
+        return np.sum(self.cells) #[c.chemicals for c in self.cells]
+    def Volume(self,ci)->float:
         return np.sum(self.cells[ci])
-
     def totalChemical(self)->float:#M
         return np.sum(self.cells,axis=1)
 
-    def calcReactionEPR(self,cell):
+    def ReactionEPR(self,cell):
         return np.sum(np.array([2*r.calcepr(cell) for r in self.reactions])) #scalar per a cell
+    
+    def TotalReactionEPR(self):
+        return np.sum([self.ReactionEPR(c) for c in self.cells])
 
-    def calcTotalReactionEPR(self):
-        return np.sum([self.calcReactionEPR(c) for c in self.cells])
-
-    def calcDiffusionEPR(self):
-        return self.diffusion_coef*calcepr(np.roll(self.cells,1)+np.roll(self.cells,-1)-2*self.cells)
-    def calcDilutionEPR(self):
+    def DiffusionEPR(self):
+        return self.diffusion_coef*calcepr(np.roll(self.cells,1)+np.roll(self.cells,-1),2*self.cells)
+    def DilutionEPR(self):
         return self.dilution_coef*calcepr(self.externalchemicals ,self.cells)
     
-    def calcTotalEPR(self):
-        return self.calcTotalReactionEPR()+self.calcDiffusionEPR()+self.calcDilutionEPR()
+    def TotalEPR(self):
+        return self.TotalReactionEPR()+self.DiffusionEPR()+self.DilutionEPR()
     
-    def calcStaticEntropy(self):#細胞間多様性 scalar
+    def StaticEntropy(self):#細胞間多様性 scalar
         #totals=self.totalChemical()
         total=self.population()
         return -np.sum( np.array([calcEP(i/total) for c in self.cells for i in c ]))
 
-    def calcStaticEntropy_chemical(self):#細胞間多様性(成分ごと) return M
+    def StaticEntropy_chemical(self):#細胞間多様性(成分ごと) return M
         totals=self.totalChemical()
         return -np.sum( np.array([[calcEP(m/totals[i]) for i,m in enumerate(c)] for c in self.cells]),axis=1)
     
     # Total Entropy
-    def calcTotalEntropy(self,dt):
-        E0=self.calcStaticEntropy()
+    def TotalEntropy(self,dt):
+        E0=self.StaticEntropy()
         self.run(dt)
-        EPR=self.calcTotalEPR()
-        E1=self.calcStaticEntropy()
+        EPR=self.TotalEPR()
+        E1=self.StaticEntropy()
         return ((E1-E0)*dt,EPR*dt)
 
-    def calcEntropies(self,dt):
-        Edif,EP=self.calcTotalEntropy(dt)
+    def Entropies(self,dt):
+        Edif,EP=self.TotalEntropy(dt)
         return {"staticdif":Edif,"EPR":EP,"dif":Edif-EP}
     
-    def calcEntropy_dif(self,dt):
-        Ed,EP=self.calcTotalEPR(dt)
+    def Entropy_dif(self,dt):
+        Ed,EP=self.TotalEPR(dt)
         return EP-Ed
-    
-    def population(self):
-        return np.sum(self.cells) #[c.chemicals for c in self.cells]
     
     def dump(self,fp=sys.stdout):
         print(self.population(),file=fp)
@@ -219,8 +216,8 @@ class Cells():
         ncells=copy.deepcopy(self.cells) #Nc x Nm
         if(self.sparse):
             for r in self.reactions:        
-                ncells[:,r.source]-=r.ps_s(self.cells)*dt
-                ncells[:,r.target]+=r.pt_s(self.cells)*dt
+                ncells[:,r.source]-=r.ps_cells(self.cells)*dt #
+                ncells[:,r.target]+=r.pt_cells(self.cells)*dt
         else: #dense
             celldict={}
             for k,ind in self.inddict: 
@@ -230,48 +227,21 @@ class Cells():
             ncells-=celldict["enzyme0"]*celldict["source"]
             ncells+=celldict["enzyme1"]*celldict["target"]
 
-        #diffusions            
         ncells+=self.diffusion_coef*(np.roll(self.cells,1)+np.roll(self.cells,-1)-2*self.cells)*dt
-        #dilutons
         ncells+=self.dilution_coef*(self.externalchemicals -self.cells)*dt
 
         if(self.growth):
-            gamma=self.calcVolume()
+            gamma=self.Volume()
             ncells=gamma*self.cells*dt
-        ncells.clip(0) #数値不安定対策
-        self.cells=ncells
-
-    def _run(self,dt:float=0.,debug=False):
-        ncells=copy.deepcopy(self.cells)
-        N=self.Nc
-        for i,c in enumerate(self.cells):
-            nc=ncells[i]
-            #reactions
-            if(debug):
-                print(f"{i}th cell")
-            for p in range(len(c.chemicals)):#chemical index
-                for r in self.reactions: #chemical reactions
-                    if(p in r.source):
-                        nc.chemicals[p]=c.chemicals[p]-r.pt(c)*dt
-                    elif(p in r.target):
-                        nc.chemicals[p]=c.chemicals[p]+r.ps(c)*dt
-                #diffusions            
-                nc.chemicals[p]+=self.Ds[p]["inter"]*(self.cells[(i-1+N)%N].chemicals[p]+self.cells[(i+1)%N].chemicals[p]-2*c.chemicals[p])*dt
-                #dilutons
-                nc.chemicals[p]+=self.Ds[p]["global"]*(self.externalchemicals[p] -c.chemicals[p])*dt
-            if(self.growth):
-                gamma=self.calcVolume(c)
-                for p in range(len(c.chemicals)):
-                    nc.chemicals[p]-=gamma*c.chemicals[p]*dt
         ncells.clip(0) #数値不安定対策
         self.cells=ncells
 
     def divide(self):
         for i,c in enumerate(self.cells):
-            if(self.calcVolume(c)>self.maxV):
+            if(self.Volume(c)>self.maxV):
                 ncell=copy.deepcopy(self.c)
-                for p in range(len(c.chemicals)):
-                    ncell.chemicals[p]+=sample()*1e-7
+                for p in range(len(c)):
+                    ncell[p]+=sample()*1e-7
                 self.cells.insert(i,ncell)
                 self.Nc=self.Nc+1
 
@@ -290,17 +260,16 @@ class Cells():
                 assert p<1e6,f"chemical concentration too large t={t} {i}th,{c},{p} {msg}"            
                 
     def saveparam(self,fp=sys.stdout):
-        print("reactions")
+        print("reactions",file=fp)
         for i in  self.reactions:
             print(i.source,i.target,i.enzymes,file=fp)
-        print("diffusions")
+        print("diffusions",file=fp)
         for d in self.Ds:
             print(d["global"],d["inter"],file=fp)
 
     def run_all(self,T,dt=0.05,suffix="",ddir="",peri=100,debug=False,plot=True):
         if(T<peri):
             peri=T
-        epss=[]
         history=[]
         totEnt=[]
         self.initcheck()
@@ -309,15 +278,18 @@ class Cells():
             self.run(dt)
             if(t%peri==0):
                 history.append(self.population())
-                totEnt.append(self.calcEntropies(dt))
+                totEnt.append(self.Entropies(dt))
 
                 if(self.growth):
                     self.divide()
 
-        self.totEnt=np.array(totEnt)
-        self.EP=np.array(epss)
-        self.history=np.array(history).reshape(self.totsize,T//peri)
+        self.totEnt=totEnt
+        self.history=np.array(history) #.reshape(self.totsize,T//peri)
+        if(debug):
+            print(self.totEnt)            
+            print(self.history)
         self.save(suffix,ddir)
+
         if(plot):        
             self.plots(suffix,ddir)
             for p in range(self.M):
@@ -346,12 +318,19 @@ class Cells():
             plt.close()
 
     def save(self,suffix,ddir):
+        tmp={"staticdif":[],"EPR":[],"dif":[]}
+        for l in self.totEnt:
+            for k in tmp:
+                tmp[k].append(l[k])
+        for k in tmp:                
+            tmp[k]=np.array(tmp[k])
+            np.savetxt(f"{ddir}/totalEntropy__{k}_{suffix}.csv",tmp[k])
+
         np.savetxt(f"{ddir}/EntropyProd_{suffix}.csv",self.EP)
-        np.savetxt(f"{ddir}/totalEntropy_{suffix}.csv",self.totEnt)
         np.savetxt(f"{ddir}/history_{suffix}.csv",self.history)
 
 
-def run_conds(T=1000,dt=0.01,Nc=200,M=10,r=0.6,rtype="random",dilute="gradient",growth=False,seed=0,outdir="outputs"):
+def run_conds(T=1000,dt=0.01,Nc=200,M=10,r=0.6,rtype="random",dilute="gradient",growth=False,seed=0,outdir="outputs",debug=False):
     Nr=int(M*r)
     externalchemicals=[sample(seed) for _ in range(M)]
     cells=Cells(Nc,M,Nr,externalchemicals,dilute=dilute,reactiontype=rtype,seed=seed,growth=growth)
@@ -361,7 +340,7 @@ def run_conds(T=1000,dt=0.01,Nc=200,M=10,r=0.6,rtype="random",dilute="gradient",
     with open(f"{outdir}_params"+name+".txt","w") as fp:
         cells.saveparam(fp)
 
-    cells.run_all(T,dt,name,ddir=outdir,peri=100)
+    cells.run_all(T,dt,name,ddir=outdir,peri=100,debug=debug)
                  
 def run_allconds(T=1000,dt=0.01,Nc=200,M=10,
                  rtype=["random","lattice","cascade","pararell","forward","backward" "feedback"],
@@ -389,13 +368,14 @@ if __name__=="__main__":
     parser.add_argument("--g",  action="store_true")
     parser.add_argument("--all",  action="store_true")
     parser.add_argument("--default",  action="store_true")
+    parser.add_argument("--debug",  action="store_true")
     args = parser.parse_args()
     if(args.all):
         run_allconds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,growth=args.g)
     elif(args.default):
         run_default(T=args.T,dt=args.dt,Nc=args.N,growth=args.g)
     else:
-        run_conds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,r=args.r,rtype="random",dilute="gradient",growth=args.g,seed=0)    
+        run_conds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,r=args.r,rtype="random",dilute="gradient",growth=args.g,seed=0,debug=True)    
 
     
 
