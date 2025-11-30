@@ -16,17 +16,17 @@ sample=lambda r=1e-8:npr.random_sample()+r
 randint=npr.randint
 
 MAXFLOAT=sys.float_info.max
-#warnings.simplefilter('error')
+warnings.simplefilter('error')
 
 def calcepr(ps:float,pt:float):
-    d=(ps>pt)*(ps-pt)+(ps<pt)*(pt-ps)
-    return d*np.log(d)
-
+    d=np.abs(ps-pt)
+    pp=(d>0).astype(int)
+    return pp*(-d*np.log(d+1e-10))
+#        return d*np.log(d)
+    
 def calcEP(p:float):
-    if(p>0.):
-        return -p*np.log(p) 
-    else:
-        return 0.
+    pp=(p>0).astype(int)
+    return pp*(-p*np.log(p+1e-10))
 
 @dataclass    
 class Cell():
@@ -162,6 +162,9 @@ class Cells():
         self.dilution_coef=np.array([d["global"] for d in self.Ds])
         self.diffusion_coef=np.array([d["inter"] for d in self.Ds])
         print("Cells shape",self.cells.shape)
+        print("total population",self.population())
+        print("Cell  volume",self.Volume())
+        print("Total Chemicals",self.totalChemical())
 
     def population(self):
         return np.sum(self.cells) #[c.chemicals for c in self.cells]
@@ -169,7 +172,6 @@ class Cells():
         return np.sum(self.cells,axis=0)
     def cellVolume(self,cell)->float: #Nc
         return np.sum(cell)
-    
     def totalChemical(self)->float:#M
         return np.sum(self.cells,axis=1)
 
@@ -188,9 +190,8 @@ class Cells():
         return self.TotalReactionEPR()+self.DiffusionEPR()+self.DilutionEPR()
     
     def StaticEntropy(self):#細胞間多様性 scalar
-        #totals=self.totalChemical()
-        total=self.population()
-        return -np.sum( np.array([calcEP(i/total) for c in self.cells for i in c ]))
+        #totals=self.totals+1e-10
+        return -np.sum( np.array([calcEP(i/self.totals) for c in self.cells for i in c ]))
 
     def StaticEntropy_chemical(self):#細胞間多様性(成分ごと) return M
         totals=self.totalChemical()
@@ -212,9 +213,6 @@ class Cells():
         Ed,EP=self.TotalEPR(dt)
         return EP-Ed
     
-    def dump(self,fp=sys.stdout):
-        print(self.population(),file=fp)
-
     def run(self,dt:float=0.,debug=False):
         ncells=copy.deepcopy(self.cells) #Nc x Nm
         if(self.sparse):
@@ -238,8 +236,10 @@ class Cells():
             self.Vrate=(V-self.V)/dt #self.V as previous V
             growthrate=self.Vrate/V
             self.V=V
-            ncells=growthrate*self.cells*dt
+            ncells+=growthrate*self.cells*dt
+            
         ncells.clip(0) #数値不安定対策
+
         self.cells=ncells
 
     def divide(self):
@@ -278,12 +278,16 @@ class Cells():
             peri=T
         history=[]
         totEnt=[]
+        self.V=self.Volume()
         self.initcheck()
         for t in range(T):
             #self.check(t)
             self.run(dt)
             if(t%peri==0):
-                history.append(self.population())
+                total=self.population()
+                self.totals=self.totalChemical()
+                history.append(total)
+                print(t,"total pop,cells",total,self.totals,self.cells)
                 totEnt.append(self.Entropies(dt))
                 if(self.growth):
                     self.divide()
@@ -334,28 +338,29 @@ class Cells():
         np.savetxt(f"{ddir}/history_{suffix}.csv",self.history)
 
 
-def run_conds(T=1000,dt=0.01,Nc=200,M=10,r=0.6,rtype="random",dilute="gradient",growth=False,seed=0,outdir="outputs",debug=False):
+def run_conds(T=1000,dt=0.01,Nc=200,M=10,r=0.6,rtype="random",dilute="gradient",growth=False,seed=0,outdir="outputs",debug=False,peri=100):
     Nr=int(M*r)
     externalchemicals=[sample(seed) for _ in range(M)]
     cells=Cells(Nc,M,Nr,externalchemicals,dilute=dilute,reactiontype=rtype,seed=seed,growth=growth)
     name=f"N{Nc}_Ch{M}_r{r}_{rtype}_{dilute}_seed{seed}"
     if(growth):
         name+="_g"
-    with open(f"{outdir}_params"+name+".txt","w") as fp:
+    with open(f"{outdir}/params"+name+".txt","w") as fp:
         cells.saveparam(fp)
 
-    cells.run_all(T,dt,name,ddir=outdir,peri=100,debug=debug)
+    cells.run_all(T,dt,name,ddir=outdir,peri=peri,debug=debug)
                  
 def run_allconds(T=1000,dt=0.01,Nc=200,M=10,
                  rtype=["random","lattice","cascade","pararell","forward","backward" "feedback"],
                  diftype=["gradient","gradient_exp","reverse","reverse_exp","random","constant"],
-                 growth=False):
+                 growth=False,
+                 peri=100):
     seed=0
     for r in rtype:
         for d in diftype:
             for Mc in [M,30,50,100,500]:
                 for nr in [0.1,0.5,0.8]:
-                    run_conds(T,dt,Nc,Mc,nr,rtype=r,dilute=d,growth=growth,seed=seed,outdir="outputs")
+                    run_conds(T,dt,Nc,Mc,nr,rtype=r,dilute=d,growth=growth,seed=seed,outdir="outputs",peri=peri)
                     seed+=1
 
 def run_default(T=1000,dt=0.01,Nc=200,M=10,r="random",d="gradient",growth=False):
@@ -380,11 +385,15 @@ if __name__=="__main__":
     parser.add_argument("--N", type=int, default=200, help="num of cells")
     parser.add_argument("--M", type=int, default=100, help="num of chemical spieses")
     parser.add_argument("--r", type=float, default=0.6, help="density ratio of chemical reactions")
-    parser.add_argument("--g",  action="store_true")
+    parser.add_argument("--peri", type=int, default=100, help="period to calualate entoropy")
+    parser.add_argument("--g",  action="store_true",help="growth mode/divide mode")
+    
     parser.add_argument("--all",  action="store_true")
     parser.add_argument("--default",  action="store_true")
     parser.add_argument("--debug",  action="store_true")
     parser.add_argument("--small",  action="store_true")
+
+
     args = parser.parse_args()
     if(args.all):
         run_allconds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,growth=args.g)
