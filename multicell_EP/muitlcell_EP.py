@@ -1,3 +1,4 @@
+
 import __future__
 import typing
 import numpy as np
@@ -22,7 +23,6 @@ def calcepr(ps:float,pt:float):
     d=np.abs(ps-pt)
     pp=(d>0).astype(int)
     return pp*(-d*np.log(d+1e-10))
-#        return d*np.log(d)
     
 def calcEP(p:float):
     pp=(p>0).astype(int)
@@ -163,17 +163,17 @@ class Cells():
         self.diffusion_coef=np.array([d["inter"] for d in self.Ds])
         print("Cells shape",self.cells.shape)
         print("total population",self.population())
-        print("Cell  volume",self.Volume())
+        print("Cell  Volume",self.Volume())
         print("Total Chemicals",self.totalChemical())
 
     def population(self):
         return np.sum(self.cells) #[c.chemicals for c in self.cells]
     def Volume(self)->float: #Nc
-        return np.sum(self.cells,axis=0)
+        return np.sum(self.cells,axis=1)
     def cellVolume(self,cell)->float: #Nc
         return np.sum(cell)
     def totalChemical(self)->float:#M
-        return np.sum(self.cells,axis=1)
+        return np.sum(self.cells,axis=0)
 
     def ReactionEPR(self,cell):
         return np.sum(np.array([2*r.calcepr(cell) for r in self.reactions])) #scalar per a cell
@@ -190,7 +190,7 @@ class Cells():
         return self.TotalReactionEPR()+self.DiffusionEPR()+self.DilutionEPR()
     
     def StaticEntropy(self):#細胞間多様性 scalar
-        #totals=self.totals+1e-10
+        assert(np.all(self.cells>0))
         return -np.sum( np.array([calcEP(i/self.totals) for c in self.cells for i in c ]))
 
     def StaticEntropy_chemical(self):#細胞間多様性(成分ごと) return M
@@ -231,16 +231,13 @@ class Cells():
         ncells+=self.diffusion_coef*(np.roll(self.cells,1)+np.roll(self.cells,-1)-2*self.cells)*dt
         ncells+=self.dilution_coef*(self.externalchemicals -self.cells)*dt
 
-        if(not self.growth):
+        if(not self.growth):#等倍縮小
             V=self.Volume()
-            self.Vrate=(V-self.V)/dt #self.V as previous V
-            growthrate=self.Vrate/V
+            growthrate=(V-self.V)/dt /V #self.V as previous V
             self.V=V
-            ncells+=growthrate*self.cells*dt
+            ncells-=(growthrate.reshape(growthrate.shape[0],1)*self.cells)*dt
             
-        ncells.clip(0) #数値不安定対策
-
-        self.cells=ncells
+        self.cells=ncells.clip(0) #数値不安定対策
 
     def divide(self):
         for i,c in enumerate(self.cells):
@@ -286,9 +283,12 @@ class Cells():
             if(t%peri==0):
                 total=self.population()
                 self.totals=self.totalChemical()
+                assert(np.all(self.totals>0))
+                ent=self.Entropies(dt)
                 history.append(total)
-                print(t,"total pop,cells",total,self.totals,self.cells)
-                totEnt.append(self.Entropies(dt))
+                totEnt.append(ent)
+                if(debug):
+                    print(f"{t}: total {total}, chemicals{self.totals},ent {ent}")
                 if(self.growth):
                     self.divide()
         self.totEnt=totEnt
