@@ -1,4 +1,3 @@
-
 import __future__
 import typing
 import numpy as np
@@ -12,6 +11,7 @@ import matplotlib.pyplot as plt
 import datetime
 import os
 import warnings
+import json 
 
 sample=lambda r=1e-8:npr.random_sample()+r
 randint=npr.randint
@@ -72,10 +72,10 @@ class Reaction1():
     #backward
     def pt_c(self,cell:npt.ArrayLike)->float: 
         return cell[self.enzymes[1]]*cell[self.target]
-
+    #forward
     def ps_cells(self,cells:npt.ArrayLike)->float: #NcxNm
         return cells[:,self.enzymes[0]]*cells[:,self.source]
-
+    #backward
     def pt_cells(self,cells:npt.ArrayLike)->float: #NcxNm
         try:
             return cells[:,self.enzymes[1]]*cells[:,self.target]
@@ -87,15 +87,16 @@ class Reaction1():
 
 @dataclass    
 class Reaction_nlin1(Reaction1):
-    sigma:float=1.
-    th:float=1.
+    def __init__(self,s,t,enz,sigma=1.,th=1.):
+        super().__init__(s,t,enz)
+        self.sigma:float=sigma
+        self.th:float=th
     #forward
     def ps_c(self,cell:npt.ArrayLike)->float: 
         return np.tanh(self.sigma*cell[self.enzymes[0]]*cell[self.source]-self.th)
     #backward
     def pt_c(self,cell:npt.ArrayLike)->float: 
         return np.tanh(self.sigma*cell[self.enzymes[1]]*cell[self.target]-self.th)
-
     #forward
     def ps_cells(self,cells:npt.ArrayLike)->float: #NcxNm
         return np.tanh(self.sigma*cells[:,self.enzymes[0]]*cells[:,self.source]-self.th)
@@ -123,27 +124,10 @@ class Cells():
         self.externalchemicals=externalchemicals
         self.maxV=100
         self.sparse=sparse
+        self.rtype=reactiontype
+        self.dtype=dilute
         self.name=""f"N{Nc}_Ch{M}_Nr{Nr}_{reactiontype}_{dilute}_seed{seed}"
-
-        if(reactiontype=="random"):
-            self.reactions=[ Reaction1(randint(M-1),randint(M-1),[randint(M-1),randint(M-1)]) for i in range(Nr)] #index
-        elif(reactiontype=="lattice"):
-            self.reactions=[ Reaction1(i,i+1,[min(i,M),max(i+1,0)]) for i in range(Nr)] #index
-        elif(reactiontype=="cascade" or reactiontype=="pair"):
-            self.reactions=[ Reaction1(i,i+1,[min(i+2,M),max(i-2,0)]) for i in range(0,Nr-1,2)] 
-        elif(reactiontype=="pararell"): #pararell
-            num=5
-            Nrr=Nr-1
-            Nr=Nr*num
-            self.reactions=[ Reaction1(i+n*Nrr,(n*Nrr)*i+1,[max(n*Nrr+i+2,Nrr*M),min(n*Nrr+i-2,0)]) for i in range(Nrr) for n in range(num)] 
-        elif(reactiontype=="forward"): #like Resnet
-            self.reactions=[ Reaction1(i,i+1,[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)]             
-            self.reactions+=[ Reaction1(i,min(i+5),[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)] #feed            
-        elif(reactiontype=="backward"): 
-            self.reactions=[ Reaction1(i,i+1,[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)]             
-            self.reactions+=[ Reaction1(i,i+1,[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)]  #feed                       
-        else:
-            print("reaction mode:random,lattice,cascade,pararell,forward,backward feedback")
+        self.init_reactions(reactiontype,Nr,M)
 
         if(dilute=="gradient"):# 奥(index大)のほうが小さい
             self.Ds=[{"global":sample((M-i)*0.1), "inter":sample((M-i)*0.1)} for i in range(M)]
@@ -168,13 +152,32 @@ class Cells():
         self.dilution_coef=np.array([d["global"] for d in self.Ds])
         self.diffusion_coef=np.array([d["inter"] for d in self.Ds])
 
-        with open(f"{self.name}_init.txt","w") as fp:
-            self.printinit(fp)            
-
         self.growthconst=0.1
         self.menbramechemical=self.M//2
-        self.linage=[i for i in range(Nc)]
-        
+        self.linage=[np.array([i for i in range(Nc)],dtype=int)]
+        self.totals=self.totalChemical()
+
+    def init_reactions(self,reactiontype,Nr,M):
+        if(reactiontype=="random"):
+            self.reactions=[ Reaction1(randint(M-1),randint(M-1),[randint(M-1),randint(M-1)]) for i in range(Nr)] #index
+        elif(reactiontype=="lattice"):
+            self.reactions=[ Reaction1(i,i+1,[min(i,M),max(i+1,0)]) for i in range(Nr)] #index
+        elif(reactiontype=="cascade" or reactiontype=="pair"):
+            self.reactions=[ Reaction1(i,i+1,[min(i+2,M),max(i-2,0)]) for i in range(0,Nr-1,2)] 
+        elif(reactiontype=="pararell"): #pararell
+            num=5
+            Nrr=Nr-1
+            Nr=Nr*num
+            self.reactions=[ Reaction1(i+n*Nrr,(n*Nrr)*i+1,[max(n*Nrr+i+2,Nrr*M),min(n*Nrr+i-2,0)]) for i in range(Nrr) for n in range(num)] 
+        elif(reactiontype=="forward"): #like Resnet
+            self.reactions=[ Reaction1(i,i+1,[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)]             
+            self.reactions+=[ Reaction1(i,min(i+5),[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)] #feed            
+        elif(reactiontype=="backward"): 
+            self.reactions=[ Reaction1(i,i+1,[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)]             
+            self.reactions+=[ Reaction1(i,i+1,[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)]  #feed                       
+        else:
+            print("reaction mode:random,lattice,cascade,pararell,forward,backward feedback")
+
     def population(self):
         return np.sum(self.cells) #[c.chemicals for c in self.cells]
     def Volume(self)->float: #Nc
@@ -251,17 +254,22 @@ class Cells():
         for i,c in enumerate(self.cells):
             if(self.cellVolume(c)>self.maxV):
                 ncell=copy.deepcopy(c)
+                nlinage=copy.deepcopy(self.linage[-1])
+                c=c/2
+                ncell=ncell/2
                 for p in range(len(c)):
                     ncell[p]+=sample()*1e-7
                 np.insert(self.cells,i,ncell)
-                np.insert(self.linage,i,i)
+                np.insert(nlinage,i,i)
                 self.Nc=self.Nc+1
         if(self.Nc>self.orgCellNum*mabiki):#mabiki
             self.cells=self.cells[::mabiki,:]
-            self.linage=self.linage[::mabiki]
+            self.linage.append(nlinage[::mabiki])
             self.Nc=self.cells.shape[0]
 
     def initcheck(self):
+        assert(np.all(self.cells>=0))
+        assert(np.all(self.cells<1e6))
         for c in self.cells:
             for i in c:    #    for i in c.chemicals:    
                 assert(i>0 and i<1e6)            
@@ -280,18 +288,22 @@ class Cells():
     def run_all(self,T,dt=0.05,suffix="",ddir="",peri=100,debug=False,plot=True):
         if(T<peri):
             peri=T
+        self.initcheck()
         history=[]
         totEnt=[]
         volumehistory=[]
         self.V=self.Volume()
-        self.initcheck()
+        initparam=self.printparams(dt)
+        lastT=T
         for t in range(T):
             self.run(dt)
             if(np.any(self.cells<0)):
                 print(f"negative chemical concentration t={t}")
+                lastT=t
                 break
             elif(np.any(self.cells>1e8)):
                 print(f"chemical concentration too large t={t}")
+                lastT=t
                 break
             if(t%peri==0):
                 total=self.population()
@@ -305,21 +317,18 @@ class Cells():
                     print(f"{t}: total {total}, chemicals{self.totals},ent {ent}")
                 if(self.growth):
                     self.divide()
+        
         self.totEnt=totEnt
         self.history=np.array(history) 
         self.volumehistory=np.array(volumehistory) 
         self.save(suffix,ddir)
-        with open(f"{self.name}_last.txt","w") as fp:
-            print(f"{self.name}, total population: {total}, Volumes: {self.Volume()},total chemicals: {self.totals},ent: {ent}",file=fp)
-
+        lastparam=self.printparams(dt)
+        lastparam["lastT"]=lastT
+        with open(f"{ddir}/summary_{suffix}.txt","w") as fp:
+            json.dump({"init":initparam,"last":lastparam},fp)            
+            
         if(plot):        
             self.plots(suffix,ddir)
-            for p in range(self.M):
-                celldist=[ c[p] for c in self.cells]
-                plt.plot(celldist)
-            plt.savefig(f"{ddir}/last_cell_distribusion_{suffix}.png")            
-            plt.clf()
-            plt.close()
 
     def show(self):
         for i,c in enumerate(self.cells):
@@ -338,6 +347,12 @@ class Cells():
             plt.savefig(f"{ddir}/{k}_{suffix}.png")            
             plt.clf()
             plt.close()
+        for p in range(self.M):
+            celldist=[ c[p] for c in self.cells]
+            plt.plot(celldist)
+        plt.savefig(f"{ddir}/last_cell_distribusion_{suffix}.png")            
+        plt.clf()
+        plt.close()
 
     def save(self,suffix,ddir):
         tmp={"staticdif":[],"EP":[],"dif":[]}
@@ -354,23 +369,61 @@ class Cells():
         self.staticEntropy=tmp["staticdif"]
         np.savetxt(f"{ddir}/total_population_{suffix}.csv",self.history)
         if(self.growth):
-            np.savetxt(f"{ddir}/linage_{suffix}.csv",np.array(self.linage))
+            with open(f"{ddir}/linage_{suffix}.csv","w") as fp:
+                for l in self.linage:
+                    print(l.tolist(),file=fp)
         
-    def printinit(self,fp=sys.stdout):
-        print("param: ",self.name,file=fp)
-        print("Cells shape: ",self.cells.shape,file=fp)
-        print("total population: ",self.population(),file=fp)
-        print("Cell  Volume: ",self.Volume(),file=fp)
-        print("Total Chemicals: ",self.totalChemical(),file=fp)
-#class
+    def printparams(self,dt):
+        p={"Nc":self.Nc,"M":self.M,"Nr":self.Nr,"rtype":self.rtype,"dtype":self.dtype,"divide":self.growth}
+        p["ent"]=self.Entropies(dt)
+        p["total population"]=float(self.population())
+        p["Cell  Volume"]=self.Volume().tolist()
+        p["Total Chemicals"]=self.totalChemical().tolist()
+        return p
+        
+        
+class Cells_nlin(Cells):
+    def __init__(self,Nc,M,Nr,externalchemicals,dilute="gradient",reactiontype="random",
+                 seed=42,growth=False,debug=False,sparse=True,sigma=1.,th=1.):
+        super().__init__(Nc,M,Nr,externalchemicals,dilute,reactiontype,seed,growth,debug,sparse)
+        self.sigma=sigma
+        self.th=th
+        
+    def init_reactions(self,reactiontype,Nr,M):
+        if(reactiontype=="random"):
+            self.reactions=[ Reaction_nlin1(randint(M-1),randint(M-1),[randint(M-1),randint(M-1)]) for i in range(Nr)] #index
+        elif(reactiontype=="lattice"):
+            self.reactions=[ Reaction_nlin1(i,i+1,[min(i,M),max(i+1,0)]) for i in range(Nr)] #index
+        elif(reactiontype=="cascade" or reactiontype=="pair"):
+            self.reactions=[ Reaction_nlin1(i,i+1,[min(i+2,M),max(i-2,0)]) for i in range(0,Nr-1,2)] 
+        elif(reactiontype=="pararell"): #pararell
+            num=5
+            Nrr=Nr-1
+            Nr=Nr*num
+            self.reactions=[ Reaction_nlin1(i+n*Nrr,(n*Nrr)*i+1,[max(n*Nrr+i+2,Nrr*M),min(n*Nrr+i-2,0)]) for i in range(Nrr) for n in range(num)] 
+        elif(reactiontype=="forward"): #like Resnet
+            self.reactions=[ Reaction_nlin1(i,i+1,[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)]             
+            self.reactions+=[ Reaction_nlin1(i,min(i+5),[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)] #feed            
+        elif(reactiontype=="backward"): 
+            self.reactions=[ Reaction_nlin1(i,i+1,[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)]             
+            self.reactions+=[ Reaction_nlin1(i,i+1,[max(i+2,M),min(i-2,0)]) for i in range(0,Nr-1,2)]  #feed                       
+        else:
+            print("reaction mode:random,lattice,cascade,pararell,forward,backward feedback")
 
-def run_conds(T=1000,dt=0.01,Nc=200,M=10,r=0.6,rtype="random",dilute="gradient",growth=False,seed=0,outdir="outputs",debug=False,peri=100):
+#class
+#run
+def run_conds(T=1000,dt=0.01,Nc=200,M=10,r=0.6,rtype="random",dilute="gradient",growth=False,seed=0,outdir="outputs",debug=False,peri=100,nlin=False):
     Nr=int(M*r)
     externalchemicals=[sample(seed) for _ in range(M)]
-    cells=Cells(Nc,M,Nr,externalchemicals,dilute=dilute,reactiontype=rtype,seed=seed,growth=growth)
+    if(nlin):
+        cells=Cells_nlin(Nc,M,Nr,externalchemicals,dilute=dilute,reactiontype=rtype,seed=seed,growth=growth)
+    else:
+        cells=Cells(Nc,M,Nr,externalchemicals,dilute=dilute,reactiontype=rtype,seed=seed,growth=growth)
     name=f"N{Nc}_Ch{M}_r{r}_{rtype}_{dilute}_seed{seed}"
     if(growth):
         name+="_g"
+    else:
+        name+="_v"
     with open(f"{outdir}/params"+name+".txt","w") as fp:
         cells.saveparam(fp)
 
@@ -426,25 +479,27 @@ if __name__=="__main__":
     parser.add_argument("--r", type=float, default=0.6, help="density ratio of chemical reactions")
     parser.add_argument("--peri", type=int, default=100, help="period to calualate entoropy")
     parser.add_argument("--g",  action="store_true",help="growth mode/divide mode")
-    
-    parser.add_argument("--all",  action="store_true")
-    parser.add_argument("--default",  action="store_true")
     parser.add_argument("--debug",  action="store_true")
-    parser.add_argument("--small",  action="store_true")
-
+    parser.add_argument("--mode",  type=str,default="")
+    parser.add_argument("--nlin",  action="store_true")
 
     args = parser.parse_args()
-    if(args.all):
+    if(args.mode=="all"):
         run_allconds(T=args.T,dt=args.dt,M=args.M,growth=args.g)
-    elif(args.default):
+    elif(args.mode=="default"):
+        run_default(T=args.T,dt=args.dt,growth=False)
         run_default(T=args.T,dt=args.dt,growth=True)
-#        run_default(T=args.T,dt=args.dt,growth=False)
-    elif(args.small):
-        run_small(T=args.T,dt=args.dt,growth=False)    
+    elif(args.mode=="divide"):  
+        run_default(T=args.T,dt=args.dt,growth=True)
+    elif(args.mode=="small"):
+        #run_small(T=args.T,dt=args.dt,growth=False)    
         run_small(T=args.T,dt=args.dt,growth=True)    
-    else:
+    elif(args.mode=="other"):
+        for growth in [True,False]:
+            run_allconds(T=args.T,dt=args.dt,Nc=100,growth=growth,
+                 rtype=["lattice","cascade","pararell","forward","backward" "feedback"],
+                 diftype=["gradient","gradient_exp","reverse","reverse_exp","random","constant"])
+    else: #spesicif paramsters
         run_conds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,r=args.r,rtype="random",dilute="gradient",growth=args.g,seed=0,debug=True)    
 
-    
-
-                 
+                
