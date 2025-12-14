@@ -433,20 +433,21 @@ def run_allconds(T=1000,dt=0.01,M=10,
                  rtype=["random","lattice","cascade","pararell","forward","backward" "feedback"],
                  diftype=["gradient","gradient_exp","reverse","reverse_exp","random","constant"],
                  growth=False,
-                 peri=100):
+                 peri=100,
+                 nlin=False):
     seed=0
     for r in rtype:
         for d in diftype:
             for Nc in [100,200,400,500]:
                 for Mc in [M,30,50,100,500]:
                     for nr in [0.1,0.5,0.8]:
-                        run_conds(T,dt,Nc,Mc,nr,rtype=r,dilute=d,growth=growth,seed=seed,outdir="outputs",peri=peri)
+                        run_conds(T,dt,Nc,Mc,nr,rtype=r,dilute=d,growth=growth,seed=seed,outdir="outputs",peri=peri,nlin=nlin)
                         seed+=1
 
-def run_default(T=1000,dt=0.01,M=10,r=["random"],d=["gradient"],growth=False):
-    run_allconds(T,dt,M,rtype=r,diftype=d,growth=growth)
+def run_default(T=1000,dt=0.01,M=10,r=["random"],d=["gradient"],growth=False,nlin=False):
+    run_allconds(T,dt,M,rtype=r,diftype=d,growth=growth,nlin=nlin)
 
-def run_N(T=1000,dt=0.01,Nc=200,M=10,growth=False):
+def run_N(T=1000,dt=0.01,Nc=200,M=10,growth=False,nlin=False):
     rtype=["random","lattice","cascade","pararell","forward","backward" "feedback"],
     diftype=["gradient","gradient_exp","reverse","reverse_exp","random","constant"],
     seed=0
@@ -455,18 +456,18 @@ def run_N(T=1000,dt=0.01,Nc=200,M=10,growth=False):
             for d in diftype:
                 for Mc in [M,30,50,100,500]:
                     for nr in [0.1,0.5,0.8]:
-                        run_conds(T,dt,Nc,Mc,nr,rtype=r,dilute=d,growth=growth,seed=seed,outdir="outputs")
+                        run_conds(T,dt,Nc,Mc,nr,rtype=r,dilute=d,growth=growth,seed=seed,outdir="outputs",nlin=nlin)
                         seed+=1
 
 def run_small(T,dt,rtype=["random","cascade"],
-              diftype=["gradient","reverse","random"],growth=False):
-    seed=0
+              diftype=["gradient","reverse","random"],growth=False,nlin=False):
+    seed=0,
     for r in rtype:
         for d in diftype:
             for Nc in [10,20,50]:
                 for Mc in [10,20,50]:
                     for nr in [0.1,0.3,0.5]:
-                        run_conds(T,dt,Nc,Mc,nr,rtype=r,dilute=d,growth=growth,seed=seed,outdir="outputs")
+                        run_conds(T,dt,Nc,Mc,nr,rtype=r,dilute=d,growth=growth,seed=seed,outdir="outputs",nlin=nlin)
                         seed+=1
 
 if __name__=="__main__":
@@ -485,21 +486,24 @@ if __name__=="__main__":
 
     args = parser.parse_args()
     if(args.mode=="all"):
-        run_allconds(T=args.T,dt=args.dt,M=args.M,growth=args.g)
+        run_allconds(T=args.T,dt=args.dt,M=args.M,growth=args.g,nlin=args.nlin)
     elif(args.mode=="default"):
-        run_default(T=args.T,dt=args.dt,growth=False)
-        run_default(T=args.T,dt=args.dt,growth=True)
+        run_default(T=args.T,dt=args.dt,growth=False,nlin=args.nlin)
+        run_default(T=args.T,dt=args.dt,growth=True,nlin=args.nlin)
     elif(args.mode=="divide"):  
-        run_default(T=args.T,dt=args.dt,growth=True)
+        run_default(T=args.T,dt=args.dt,growth=True,nlin=args.nlin)
     elif(args.mode=="small"):
-        #run_small(T=args.T,dt=args.dt,growth=False)    
-        run_small(T=args.T,dt=args.dt,growth=True)    
+        run_small(T=args.T,dt=args.dt,growth=False,nlin=args.nlin)    
+        run_small(T=args.T,dt=args.dt,growth=True,nlin=args.nlin)    
     elif(args.mode=="other"):
         for growth in [True,False]:
             run_allconds(T=args.T,dt=args.dt,Nc=100,growth=growth,
                  rtype=["lattice","cascade","pararell","forward","backward" "feedback"],
-                 diftype=["gradient","gradient_exp","reverse","reverse_exp","random","constant"])
+                 diftype=["gradient","gradient_exp","reverse","reverse_exp","random","constant"],
+                 nlin=args.nlin)
     else: #spesicif paramsters
-        run_conds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,r=args.r,rtype="random",dilute="gradient",growth=args.g,seed=0,debug=True)    
+        run_conds(T=args.T,dt=args.dt,Nc=args.N,M=args.M,r=args.r,
+                  rtype="random",dilute="gradient",
+                  growth=args.g,seed=0,debug=True,nlin=args.nlin)
 
                 
