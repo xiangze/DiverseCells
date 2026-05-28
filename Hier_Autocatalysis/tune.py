@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import optuna
 from optuna.samplers import TPESampler
 
-from hier_v2 import HierAutocat, run as base_run
+from hierarchical_autocatalysis import HierAutocat, run as base_run
 
 
 # ---------------------------------------------------------------------------
